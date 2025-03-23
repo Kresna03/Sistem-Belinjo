@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Sistem Pembungkusan Belinjo</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f7f7f7; }
+    h2 { margin-top: 40px; display: flex; justify-content: space-between; align-items: center; }
+    .container { background: white; padding: 20px; margin-bottom: 40px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+    th { background-color: #007BFF; color: white; }
+    button { margin: 5px; padding: 8px 12px; border: none; background: #007BFF; color: white; cursor: pointer; border-radius: 5px; }
+    button:hover { background: #0056b3; }
+    button.delete { background: #dc3545; }
+    button.delete:hover { background: #a71d2a; }
+    input, select { padding: 5px; margin: 5px; }
+    .total-ringkasan { background: #f1f1f1; padding: 10px; margin-top: 10px; }
+    .pagination { margin-top: 10px; }
+    .pagination button { background: #28a745; }
+    .pagination button.disabled { background: #ccc; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+
+  <h1>Sistem Pembungkusan Belinjo</h1>
+
+  <div>
+    <input type="text" id="namaInput" placeholder="Masukkan nama">
+    <button onclick="tambahNama()">Tambah Nama</button>
+    <button onclick="exportToExcel()">Export Excel</button>
+    <button onclick="exportToPDF()">Export PDF</button>
+  </div>
+
+  <div id="namaSections"></div>
+
+  <!-- SheetJS untuk Excel -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <!-- jsPDF untuk PDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+  <!-- Firebase SDK -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBtrOc1jMsw0mblfptS_8O7m5da6XK2Ako",
+      authDomain: "sistem-pembungkusan.firebaseapp.com",
+      projectId: "sistem-pembungkusan",
+      storageBucket: "sistem-pembungkusan.appspot.com",
+      messagingSenderId: "523667211612",
+      appId: "1:523667211612:web:831b90c879237975256d99",
+      measurementId: "G-17BDVT79T4"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const namaSections = document.getElementById('namaSections');
+    let namaList = [];
+
+    let editIndex = null; // Global untuk track rekod yang nak diedit
+
+    // Listener Data Nama (Real-time)
+    onSnapshot(collection(db, "nama"), (snapshot) => {
+      namaList = [];
+      snapshot.forEach(doc => {
+        namaList.push({ id: doc.id, ...doc.data() });
+      });
+      renderAllTables();
+    });
+
+    // Tambah Nama
+    async function tambahNama() {
+      const nama = document.getElementById('namaInput').value.trim();
+      if (!nama) return alert("Sila masukkan nama!");
+
+      const docRef = doc(db, "nama", nama);
+      const docSnap = await getDoc(docRef);
+
+      if (docSnap.exists()) {
+        alert("Nama sudah wujud!");
+      } else {
+        await setDoc(docRef, { rekod: [] });
+        alert("Nama berjaya ditambah!");
+        document.getElementById('namaInput').value = '';
+      }
+    }
+
+    // Padam Nama
+    async function padamNama(nama) {
+      const confirmDelete = confirm(`Padam semua data untuk nama "${nama}"?`);
+      if (!confirmDelete) return;
+
+      await deleteDoc(doc(db, "nama", nama));
+      alert(`Nama "${nama}" dan semua rekod berjaya dipadam!`);
+    }
+
+    // Render Semua Table
+    function renderAllTables() {
+      namaSections.innerHTML = '';
+      namaList.forEach(namaObj => renderTable(namaObj));
+    }
+
+    // Render Table Ikut Nama
+    function renderTable(namaObj) {
+      const container = document.createElement('div');
+      container.className = 'container';
+
+      const { id: nama, rekod } = namaObj;
+
+      let currentPage = 1;
+      const perPage = 10;
+      const totalPages = Math.ceil(rekod.length / perPage);
+
+      container.innerHTML = `
+        <h2>
+          ${nama}
+          <button class="delete" onclick="padamNama('${nama}')">Padam Nama</button>
+        </h2>
+
+        <div>
+          <input type="date" id="tarikh_${nama}">
+          <input type="text" placeholder="Hari" id="hari_${nama}">
+          <input type="number" placeholder="Balang Besar" id="balangBesar_${nama}">
+          <input type="number" placeholder="Balang Kecil" id="balangKecil_${nama}">
+          <input type="number" placeholder="Plastik" id="plastik_${nama}">
+          <button id="btnTambah_${nama}" onclick="tambahRekod('${nama}')">Tambah Rekod</button>
+        </div>
+
+        <div class="total-ringkasan" id="ringkasan_${nama}"></div>
+
+        <table id="table_${nama}"></table>
+
+        <div class="pagination">
+          <button id="prev_${nama}">Prev</button>
+          <span id="pageInfo_${nama}">Page ${currentPage} / ${totalPages}</span>
+          <button id="next_${nama}">Next</button>
+        </div>
+      `;
+
+      namaSections.appendChild(container);
+
+      function updatePagination(page) {
+        currentPage = page;
+        renderTableRows(nama, rekod, currentPage, perPage);
+        container.querySelector(`#pageInfo_${nama}`).textContent = `Page ${currentPage} / ${totalPages}`;
+        container.querySelector(`#prev_${nama}`).disabled = currentPage === 1;
+        container.querySelector(`#next_${nama}`).disabled = currentPage === totalPages || totalPages === 0;
+      }
+
+      container.querySelector(`#prev_${nama}`).onclick = () => {
+        if (currentPage > 1) updatePagination(currentPage - 1);
+      };
+      container.querySelector(`#next_${nama}`).onclick = () => {
+        if (currentPage < totalPages) updatePagination(currentPage + 1);
+      };
+
+      updatePagination(currentPage);
+    }
+
+    // Render Row Data
+    function renderTableRows(nama, rekod, page, perPage) {
+      const table = document.getElementById(`table_${nama}`);
+      table.innerHTML = `
+        <tr>
+          <th>#</th>
+          <th>Tarikh</th>
+          <th>Hari</th>
+          <th>Balang Besar</th>
+          <th>Balang Kecil</th>
+          <th>Plastik</th>
+          <th>Tindakan</th>
+        </tr>
+      `;
+
+      const start = (page - 1) * perPage;
+      const pageData = rekod.slice(start, start + perPage);
+
+      pageData.forEach((r, i) => {
+        table.innerHTML += `
+          <tr>
+            <td>${start + i + 1}</td>
+            <td>${r.tarikh}</td>
+            <td>${r.hari}</td>
+            <td>${r.balangBesar}</td>
+            <td>${r.balangKecil}</td>
+            <td>${r.plastik}</td>
+            <td>
+              <button onclick="editRekod('${nama}', ${start + i})">Edit</button>
+              <button onclick="padamRekod('${nama}', ${start + i})">Padam</button>
+            </td>
+          </tr>
+        `;
+      });
+
+      const totalBes = rekod.reduce((sum, r) => sum + r.balangBesar, 0);
+      const totalKec = rekod.reduce((sum, r) => sum + r.balangKecil, 0);
+      const totalPlas = rekod.reduce((sum, r) => sum + r.plastik, 0);
+
+      document.getElementById(`ringkasan_${nama}`).innerHTML = `
+        Total Balang Besar: ${totalBes} | 
+        Total Balang Kecil: ${totalKec} | 
+        Total Plastik: ${totalPlas}
+      `;
+    }
+
+    // Tambah Rekod
+    async function tambahRekod(nama) {
+      const tarikh = document.getElementById(`tarikh_${nama}`).value;
+      const hari = document.getElementById(`hari_${nama}`).value.trim();
+      const balangBesar = parseInt(document.getElementById(`balangBesar_${nama}`).value) || 0;
+      const balangKecil = parseInt(document.getElementById(`balangKecil_${nama}`).value) || 0;
+      const plastik = parseInt(document.getElementById(`plastik_${nama}`).value) || 0;
+
+      if (!tarikh || !hari) return alert("Lengkapkan tarikh dan hari!");
+
+      const docRef = doc(db, "nama", nama);
+      const docSnap = await getDoc(docRef);
+      let rekodSediaAda = docSnap.exists() ? docSnap.data().rekod : [];
+
+      rekodSediaAda.push({ tarikh, hari, balangBesar, balangKecil, plastik });
+      await updateDoc(docRef, { rekod: rekodSediaAda });
+
+      // Reset input
+      document.getElementById(`tarikh_${nama}`).value = '';
+      document.getElementById(`hari_${nama}`).value = '';
+      document.getElementById(`balangBesar_${nama}`).value = '';
+      document.getElementById(`balangKecil_${nama}`).value = '';
+      document.getElementById(`plastik_${nama}`).value = '';
+    }
+
+    // Edit Rekod
+    async function editRekod(nama, index) {
+      const docRef = doc(db, "nama", nama);
+      const docSnap = await getDoc(docRef);
+      let rekodSediaAda = docSnap.exists() ? docSnap.data().rekod : [];
+
+      const rekod = rekodSediaAda[index];
+
+      document.getElementById(`tarikh_${nama}`).value = rekod.tarikh;
+      document.getElementById(`hari_${nama}`).value = rekod.hari;
+      document.getElementById(`balangBesar_${nama}`).value = rekod.balangBesar;
+      document.getElementById(`balangKecil_${nama}`).value = rekod.balangKecil;
+      document.getElementById(`plastik_${nama}`).value = rekod.plastik;
+
+      editIndex = index;
+
+      const tambahButton = document.getElementById(`btnTambah_${nama}`);
+      tambahButton.textContent = 'Kemaskini Rekod';
+      tambahButton.onclick = () => kemaskiniRekod(nama);
+    }
+
+    // Kemaskini Rekod
+    async function kemaskiniRekod(nama) {
+      if (editIndex === null) return alert("Tiada rekod dipilih!");
+
+      const tarikh = document.getElementById(`tarikh_${nama}`).value;
+      const hari = document.getElementById(`hari_${nama}`).value.trim();
+      const balangBesar = parseInt(document.getElementById(`balangBesar_${nama}`).value) || 0;
+      const balangKecil = parseInt(document.getElementById(`balangKecil_${nama}`).value) || 0;
+      const plastik = parseInt(document.getElementById(`plastik_${nama}`).value) || 0;
+
+      const docRef = doc(db, "nama", nama);
+      const docSnap = await getDoc(docRef);
+      let rekodSediaAda = docSnap.exists() ? docSnap.data().rekod : [];
+
+      rekodSediaAda[editIndex] = { tarikh, hari, balangBesar, balangKecil, plastik };
+
+      await updateDoc(docRef, { rekod: rekodSediaAda });
+
+      alert("Rekod berjaya dikemaskini!");
+
+      editIndex = null;
+
+      document.getElementById(`tarikh_${nama}`).value = '';
+      document.getElementById(`hari_${nama}`).value = '';
+      document.getElementById(`balangBesar_${nama}`).value = '';
+      document.getElementById(`balangKecil_${nama}`).value = '';
+      document.getElementById(`plastik_${nama}`).value = '';
+
+      const tambahButton = document.getElementById(`btnTambah_${nama}`);
+      tambahButton.textContent = 'Tambah Rekod';
+      tambahButton.onclick = () => tambahRekod(nama);
+    }
+
+    // Padam Rekod
+    async function padamRekod(nama, index) {
+      const confirmDelete = confirm("Padam rekod ini?");
+      if (!confirmDelete) return;
+
+      const docRef = doc(db, "nama", nama);
+      const docSnap = await getDoc(docRef);
+      let rekodSediaAda = docSnap.exists() ? docSnap.data().rekod : [];
+
+      rekodSediaAda.splice(index, 1);
+      await updateDoc(docRef, { rekod: rekodSediaAda });
+    }
+
+    // Export Excel
+    async function exportToExcel() {
+      const workbook = XLSX.utils.book_new();
+
+      for (const namaObj of namaList) {
+        const wsData = [
+          ["Tarikh", "Hari", "Balang Besar", "Balang Kecil", "Plastik"]
+        ];
+
+        namaObj.rekod.forEach(r => {
+          wsData.push([r.tarikh, r.hari, r.balangBesar, r.balangKecil, r.plastik]);
+        });
+
+        const worksheet = XLSX.utils.aoa_to_sheet(wsData);
+        XLSX.utils.book_append_sheet(workbook, worksheet, namaObj.id);
+      }
+
+      XLSX.writeFile(workbook, "rekod_belinjo.xlsx");
+    }
+
+    // Export PDF
+    async function exportToPDF() {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+
+      let y = 10;
+
+      namaList.forEach((namaObj) => {
+        doc.setFontSize(14);
+        doc.text(namaObj.id, 10, y);
+        y += 10;
+
+        doc.setFontSize(10);
+        namaObj.rekod.forEach(r => {
+          doc.text(`${r.tarikh} | ${r.hari} | ${r.balangBesar} | ${r.balangKecil} | ${r.plastik}`, 10, y);
+          y += 7;
+          if (y > 270) { doc.addPage(); y = 10; }
+        });
+
+        y += 10;
+      });
+
+      doc.save("rekod_belinjo.pdf");
+    }
+
+    window.tambahNama = tambahNama;
+    window.padamNama = padamNama;
+    window.tambahRekod = tambahRekod;
+    window.editRekod = editRekod;
+    window.kemaskiniRekod = kemaskiniRekod;
+    window.padamRekod = padamRekod;
+    window.exportToExcel = exportToExcel;
+    window.exportToPDF = exportToPDF;
+  </script>
+</body>
+</html>
